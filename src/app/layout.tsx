@@ -13,15 +13,18 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-gray-50 text-gray-900">
-        <nav className="border-b bg-white">
-          <div className="mx-auto max-w-4xl px-4 py-4">
-            <a href="/" className="text-xl font-bold tracking-tight">
+      <body className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 text-gray-900">
+        <nav className="border-b border-blue-100 bg-white/80 backdrop-blur-sm">
+          <div className="mx-auto max-w-5xl px-4 py-4 sm:px-6">
+            <a
+              href="/"
+              className="text-xl font-bold tracking-tight text-blue-900 transition hover:text-blue-600"
+            >
               Multi-Project Pipeline Lab
             </a>
           </div>
         </nav>
-        <main className="mx-auto max-w-4xl px-4 py-8">{children}</main>
+        <main className="mx-auto max-w-5xl px-4 py-12 sm:px-6">{children}</main>
       </body>
     </html>
   );
