@@ -1,6 +1,8 @@
 import { getArticles } from "@/services/api";
 import { TopicCard } from "@/components/TopicCard";
 
+export const dynamic = "force-dynamic";
+
 export default async function HomePage() {
   const articles = await getArticles();
 
