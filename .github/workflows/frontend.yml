@@ -57,13 +57,73 @@ jobs:
     runs-on: ubuntu-latest
     needs: [docker]
     steps:
-      - name: Trigger Integration Tests
+      - name: Parse dependency and dispatch
         run: |
+          FRONTEND_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          BACKEND_TAG="${{ env.REGISTRY }}/${{ github.repository_owner }}/backend-lab:latest"
+          UPSTREAMS=""
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+            UPSTREAMS="[{\"repo\":\"${{ github.repository }}\",\"sha\":\"${{ github.sha }}\"}]"
+          else
+            PR_URL="repos/${{ github.repository }}/pulls/${{ github.event.number }}"
+            PR_BODY=$(gh api "$PR_URL" --jq '.body' 2>/dev/null || echo "")
+            DEP=$(echo "$PR_BODY" | grep -E '^cross-repo-dependency:' | sed 's/^cross-repo-dependency: *//' | head -1)
+
+            if [ -n "$DEP" ]; then
+              DEP_REPO=$(echo "$DEP" | cut -d'/' -f1-2)
+              DEP_PR=$(echo "$DEP" | cut -d'/' -f3)
+              DEP_COUNT=$(echo "$DEP" | awk -F'/' '{print NF}')
+              if [ "$DEP_COUNT" -ne 3 ] || [ -z "$DEP_REPO" ] || [ -z "$DEP_PR" ]; then
+                echo "Invalid dependency format: $DEP (expected: owner/repo/PR-number)"
+                echo "Treating as no dependency and dispatching normally."
+                DEP=""
+              elif [ -z "$(echo "$DEP_PR" | grep -E '^[0-9]+$')" ]; then
+                echo "Invalid PR number in dependency: $DEP"
+                echo "Treating as no dependency and dispatching normally."
+                DEP=""
+              fi
+            fi
+
+            if [ -n "$DEP" ]; then
+              DEP_SHA=$(gh api "repos/$DEP_REPO/pulls/$DEP_PR" --jq '.head.sha' 2>/dev/null || echo "")
+
+              if [ -n "$DEP_SHA" ]; then
+                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+                  -H "Authorization: Bearer ${{ secrets.GH_PAT }}" \
+                  "https://ghcr.io/v2/$DEP_REPO/manifests/pr-$DEP_PR")
+
+                if [ "$HTTP_CODE" = "200" ]; then
+                  echo "Cross-repo: testing with $DEP_REPO PR #$DEP_PR"
+                  BACKEND_TAG="ghcr.io/$DEP_REPO:pr-$DEP_PR"
+                  PR_SHA="${{ github.event.pull_request.head.sha }}"
+                  UPSTREAMS="[{\"repo\":\"${{ github.repository }}\",\"sha\":\"$PR_SHA\"},{\"repo\":\"$DEP_REPO\",\"sha\":\"$DEP_SHA\"}]"
+                else
+                  echo "Dependency $DEP_REPO PR #$DEP_PR image not ready yet."
+                  gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+                    -f state=pending \
+                    -f context=e2e/integration \
+                    -f "description=Waiting for dependency: $DEP"
+                  exit 0
+                fi
+              else
+                echo "Could not resolve dependency: $DEP"
+                gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+                  -f state=pending \
+                  -f context=e2e/integration \
+                  -f "description=Waiting for dependency: $DEP"
+                exit 0
+              fi
+            else
+              PR_SHA="${{ github.event.pull_request.head.sha }}"
+              UPSTREAMS="[{\"repo\":\"${{ github.repository }}\",\"sha\":\"$PR_SHA\"}]"
+            fi
+          fi
+
           gh api repos/${{ github.repository_owner }}/e2e-flowts-lab/dispatches \
             -f event_type=integration-tests \
-            -f "client_payload[frontend_image]=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" \
-            -f "client_payload[backend_image]=${{ env.REGISTRY }}/${{ github.repository_owner }}/backend-lab:latest" \
-            -f "client_payload[upstream_repo]=${{ github.repository }}" \
-            -f "client_payload[upstream_sha]=${{ github.event.pull_request.head.sha || github.sha }}"
+            -f "client_payload[frontend_image]=$FRONTEND_TAG" \
+            -f "client_payload[backend_image]=$BACKEND_TAG" \
+            -f "client_payload[upstreams]=$UPSTREAMS"
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
