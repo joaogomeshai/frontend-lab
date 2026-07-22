@@ -14,7 +14,7 @@ export default async function HomePage() {
     <div>
       <section className="mb-12">
         <h1 className="mb-3 text-4xl font-extrabold tracking-tight text-blue-900 sm:text-5xl">
-          Multi-Project Pipeline Lab
+          Multi-Project Pipeline laboratory
         </h1>
         <p className="max-w-2xl text-lg text-gray-600">
           A learning laboratory for understanding multi-project CI/CD pipelines,
