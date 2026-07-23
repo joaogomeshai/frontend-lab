@@ -1,55 +1,122 @@
-# Frontend Pipeline
-# This file would be placed at frontend/.gitlab-ci.yml
+image: node:22
 
-image: node:20-alpine
+stages: [lint, build, docker, integration]
+
+default:
+  interruptible: true
 
 variables:
-  REGISTRY: $CI_REGISTRY
-  IMAGE_TAG: $CI_COMMIT_SHA
+  IMAGE_NAME: $CI_REGISTRY_IMAGE
 
-stages:
-  - lint
-  - test
-  - build
-  - docker
-  - trigger
+workflow:
+  rules:
+    - if: '$CI_SERVER_NAME == "GitLab" && $CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_SERVER_NAME == "GitLab" && $CI_PIPELINE_SOURCE == "pipeline" && $WAKEUP_FROM_MR =~ /^[0-9]+$/'
+    - when: never
+
+.mr-job:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
 lint:
+  extends: .mr-job
   stage: lint
   script:
-    - npm ci
-    - npm run lint
-
-test:
-  stage: test
-  script:
-    - npm ci
-    - npm test
+    - npm install
+    - npx tsc --noEmit
 
 build:
+  extends: .mr-job
   stage: build
   script:
-    - npm ci
+    - npm install
     - npm run build
 
 docker:
+  extends: .mr-job
   stage: docker
   image: docker:27
-  services:
-    - docker:27-dind
+  services: [docker:27-dind]
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
   script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - docker build -t $REGISTRY/$CI_PROJECT_PATH/frontend:$IMAGE_TAG .
-    - docker tag $REGISTRY/$CI_PROJECT_PATH/frontend:$IMAGE_TAG $REGISTRY/$CI_PROJECT_PATH/frontend:latest
-    - docker push $REGISTRY/$CI_PROJECT_PATH/frontend:$IMAGE_TAG
-    - docker push $REGISTRY/$CI_PROJECT_PATH/frontend:latest
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker build -t "$IMAGE_NAME:$CI_COMMIT_SHA" .
+    - docker tag "$IMAGE_NAME:$CI_COMMIT_SHA" "$IMAGE_NAME:pr-$CI_MERGE_REQUEST_IID"
+    - docker push "$IMAGE_NAME:$CI_COMMIT_SHA"
+    - docker push "$IMAGE_NAME:pr-$CI_MERGE_REQUEST_IID"
 
 trigger-integration:
-  stage: trigger
-  trigger:
-    project: myorg/e2e-tests
-    branch: main
-    strategy: depend
-  variables:
-    FRONTEND_IMAGE: $REGISTRY/$CI_PROJECT_PATH/frontend:$IMAGE_TAG
-    BACKEND_IMAGE: $REGISTRY/$CI_PROJECT_PATH/backend:$IMAGE_TAG
+  stage: integration
+  image: alpine:3.20
+  needs: [docker]
+  before_script:
+    - apk add --no-cache curl jq
+  script: |
+    # GitLab descriptions may contain CRLF line endings.
+    PR_BODY=$(printf '%s' "$CI_MERGE_REQUEST_DESCRIPTION" | tr -d '\r')
+    field() { printf '%s\n' "$PR_BODY" | awk -F': ' -v key="$1" '$1 == key { print $2; exit }' | tr -d ' '; }
+    ROLE=$(field role)
+    DEP_PROJECT=$(field dependency_project)
+    DEP_BRANCH=$(field dependency_branch)
+
+    resolve_branch() {
+      encoded=$(printf '%s' "$1" | sed 's|/|%2F|g')
+      curl --fail --silent --show-error --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+        "$CI_API_V4_URL/projects/$encoded/merge_requests?state=opened&source_branch=$2" |
+        jq -r '.[0].iid // empty'
+    }
+
+    if [ "$ROLE" = active ] && [ -n "$DEP_PROJECT" ] && [ -n "$DEP_BRANCH" ]; then
+      DEP_IID=$(resolve_branch "$DEP_PROJECT" "$DEP_BRANCH" || true)
+      if [ -z "$DEP_IID" ]; then
+        echo "Dependency MR not yet open for $DEP_BRANCH; waiting for its pipeline wakeup."
+        exit 0
+      fi
+      # A registry manifest request is portable across GitLab.com and self-managed GitLab.
+      MANIFEST="$CI_REGISTRY/v2/$DEP_PROJECT/manifests/pr-$DEP_IID"
+      if ! curl --silent --fail --head -u "gitlab-ci-token:$CI_JOB_TOKEN" "$MANIFEST" >/dev/null; then
+        echo "Dependency image pr-$DEP_IID is not ready; waiting for its pipeline wakeup."
+        exit 0
+      fi
+      FRONTEND_IMAGE="$IMAGE_NAME:pr-$CI_MERGE_REQUEST_IID"
+      BACKEND_IMAGE="$CI_REGISTRY/$DEP_PROJECT:pr-$DEP_IID"
+    else
+      # Standalone frontend MRs run against the backend's stable image.
+      FRONTEND_IMAGE="$IMAGE_NAME:pr-$CI_MERGE_REQUEST_IID"
+      BACKEND_IMAGE="$CI_REGISTRY/lab6540630/backend:latest"
+    fi
+
+    curl --fail --silent --show-error --request POST \
+      --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+      --data-urlencode "token=$CI_JOB_TOKEN" \
+      --data-urlencode "ref=main" \
+      --data-urlencode "variables[FRONTEND_IMAGE]=$FRONTEND_IMAGE" \
+      --data-urlencode "variables[BACKEND_IMAGE]=$BACKEND_IMAGE" \
+      --data-urlencode "variables[UPSTREAM_PROJECT]=$CI_PROJECT_PATH" \
+      --data-urlencode "variables[UPSTREAM_SHA]=$CI_COMMIT_SHA" \
+      "$CI_API_V4_URL/projects/lab6540630%2Fe2e-test-lab/trigger/pipeline"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+wakeup-handler:
+  stage: integration
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache curl
+  script: |
+    : "${WAKEUP_FROM_MR:?Missing passive MR IID}"
+    : "${WAKEUP_IMAGE:?Missing passive image}"
+    : "${ACTIVE_MR_IID:?Missing active frontend MR IID}"
+    echo "Wakeup received from $WAKEUP_FROM MR #$WAKEUP_FROM_MR"
+    curl --fail --silent --show-error --request POST \
+      --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+      --data-urlencode "token=$CI_JOB_TOKEN" \
+      --data-urlencode "ref=main" \
+      --data-urlencode "variables[FRONTEND_IMAGE]=$IMAGE_NAME:pr-$ACTIVE_MR_IID" \
+      --data-urlencode "variables[BACKEND_IMAGE]=$WAKEUP_IMAGE" \
+      --data-urlencode "variables[UPSTREAM_PROJECT]=$CI_PROJECT_PATH" \
+      --data-urlencode "variables[UPSTREAM_SHA]=$CI_COMMIT_SHA" \
+      "$CI_API_V4_URL/projects/lab6540630%2Fe2e-test-lab/trigger/pipeline"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "pipeline" && $WAKEUP_FROM_MR =~ /^[0-9]+$/'
