@@ -120,7 +120,7 @@ jobs:
               DEP_BRANCH=$(echo "$DEP" | sed 's/^[^/]*\/[^/]*\/branch://')
               DEP_OWNER=$(echo "$DEP_REPO" | cut -d'/' -f1)
               DEP_PR=$(gh api "repos/$DEP_REPO/pulls?head=$DEP_OWNER:$DEP_BRANCH" \
-                --jq '.[0] | select(.state == "open" and .merged == false) | .number' 2>/dev/null || echo "")
+                --jq '.[0] | select(.state == "open") | .number' 2>/dev/null || echo "")
               if [ -z "$DEP_PR" ]; then
                 echo "Branch dependency not resolvable in wakeup — nothing to do"
                 exit 0
