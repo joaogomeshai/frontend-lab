@@ -17,9 +17,8 @@ export default async function HomePage() {
           Multi-Project Pipeline laboratory
         </h1>
         <p className="max-w-2xl text-lg text-gray-600">
-          A learning laboratory for understanding multi-project CI/CD pipelines,
-          Docker-based deployments, and cross-repository end-to-end testing
-          with branch-based dependency resolution.
+          Demo flow: frontend and backend paired changes across repositories.
+          This PR waits for the matching backend branch before running E2E.
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700">
