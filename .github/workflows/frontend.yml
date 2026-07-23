@@ -261,43 +261,11 @@ jobs:
             exit 0
           fi
 
-          # Active dependency — check image and dispatch once
-          DEP_SHA=$(gh api "repos/$DEP_REPO/pulls/$DEP_PR" --jq '.head.sha' 2>/dev/null || echo "")
-
-          if [ -z "$DEP_SHA" ]; then
-            echo "Could not resolve dependency: $DEP"
-            gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
-              -f state=pending \
-              -f context=e2e/integration \
-              -f "description=Waiting for dependency: $DEP"
-            exit 0
-          fi
-
-          GHCR_TOKEN=$(curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:$DEP_REPO:pull" \
-            -u "oauth2:${{ secrets.GH_PAT }}" | jq -r '.token')
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer $GHCR_TOKEN" \
-            "https://ghcr.io/v2/$DEP_REPO/manifests/pr-$DEP_PR")
-
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "Dependency $DEP_REPO PR #$DEP_PR image not ready yet"
-            gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
-              -f state=pending \
-              -f context=e2e/integration \
-              -f "description=Waiting for dependency: $DEP"
-            exit 0
-          fi
-
-          echo "Cross-repo: testing with $DEP_REPO PR #$DEP_PR"
-          PR_SHA="${{ github.event.pull_request.head.sha }}"
-          FRONTEND_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
-          BACKEND_TAG="ghcr.io/$DEP_REPO:pr-$DEP_PR"
-          UPSTREAMS="[{\"repo\":\"${{ github.repository }}\",\"sha\":\"$PR_SHA\"},{\"repo\":\"$DEP_REPO\",\"sha\":\"$DEP_SHA\"}]"
-
-          gh api repos/${{ github.repository_owner }}/e2e-flowts-lab/dispatches \
-            -f event_type=integration-tests \
-            -f "client_payload[frontend_image]=$FRONTEND_TAG" \
-            -f "client_payload[backend_image]=$BACKEND_TAG" \
-            -f "client_payload[upstreams]=$UPSTREAMS"
+          # Active dependency — set pending and wait for backend wakeup
+          echo "Active dependency $DEP — waiting for backend wakeup"
+          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+            -f state=pending \
+            -f context=e2e/integration \
+            -f "description=Waiting for dependency: $DEP"
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
