@@ -6,6 +6,7 @@ export interface Article {
   topic: string;
 }
 
+
 export interface Topic {
   name: string;
   slug: string;
