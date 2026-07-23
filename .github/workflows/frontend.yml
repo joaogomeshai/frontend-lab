@@ -19,6 +19,10 @@ on:
         description: Passive dependency repository
         required: true
         type: string
+      passive_pr_number:
+        description: Passive dependency pull request number
+        required: true
+        type: string
       passive_sha:
         description: Passive dependency commit SHA
         required: true
@@ -96,26 +100,17 @@ jobs:
             PR_NUM="${{ inputs.pr_number }}"
             PR_SHA="${{ inputs.pr_head_sha }}"
             PASSIVE_REPO="${{ inputs.passive_repo }}"
+            PASSIVE_PR="${{ inputs.passive_pr_number }}"
             PASSIVE_SHA="${{ inputs.passive_sha }}"
 
-            echo "Wakeup received from $PASSIVE_REPO — re-checking dependency for PR #$PR_NUM"
-
-            PR_BODY=$(gh api "repos/${{ github.repository }}/pulls/$PR_NUM" --jq '.body')
-            DEP=$(echo "$PR_BODY" | grep -E '^cross-repo-dependency:' | sed 's/^cross-repo-dependency: *//' | head -1)
-            ROLE=$(printf '%s\n' "$PR_BODY" | sed 's/^[[:space:]]*//' | awk -F': ' '/^role:/{print $2; exit}')
-            DEP_PROJECT=$(printf '%s\n' "$PR_BODY" | sed 's/^[[:space:]]*//' | awk -F': ' '/^dependency_project:/{print $2; exit}')
-            DEP_BRANCH=$(printf '%s\n' "$PR_BODY" | sed 's/^[[:space:]]*//' | awk -F': ' '/^dependency_branch:/{print $2; exit}')
-            if [ "$ROLE" = "active" ] && [ -n "$DEP_PROJECT" ] && [ -n "$DEP_BRANCH" ]; then
-              DEP="$DEP_PROJECT/branch:$DEP_BRANCH"
-            fi
-
-            if [ -z "$DEP" ] || [ "$(echo "$DEP" | awk -F'/' '{print NF}')" -ne 3 ]; then
-              echo "No valid dependency — nothing to do"
+            echo "Wakeup received from $PASSIVE_REPO PR #$PASSIVE_PR for active PR #$PR_NUM"
+            if ! [[ "$PASSIVE_PR" =~ ^[0-9]+$ ]]; then
+              echo "Invalid passive pull request number — nothing to do"
               exit 0
             fi
 
-            DEP_REPO=$(echo "$DEP" | cut -d'/' -f1-2)
-            DEP_PR=$(echo "$DEP" | cut -d'/' -f3)
+            DEP_REPO="$PASSIVE_REPO"
+            DEP_PR="$PASSIVE_PR"
 
             GHCR_TOKEN=$(curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:$DEP_REPO:pull" \
               -u "oauth2:${{ secrets.GH_PAT }}" | jq -r '.token')
