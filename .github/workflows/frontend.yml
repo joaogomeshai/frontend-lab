@@ -165,11 +165,22 @@ jobs:
               echo "$repo/$pr_num"
             fi
           }
+
           # wait_for: passive — wakeup the active PR
           if [[ "$DEP" = wait_for:* ]]; then
             WAIT_TARGET="${DEP#wait_for:}"
             WAIT_REPO=$(echo "$WAIT_TARGET" | cut -d'/' -f1-2)
             WAIT_PR=$(echo "$WAIT_TARGET" | cut -d'/' -f3)
+
+            # If wait_for target uses branch: format, resolve it
+            if echo "$WAIT_TARGET" | grep -qE '^[^/]+/[^/]+/branch:'; then
+              RESOLVED=$(resolve_branch "$WAIT_TARGET")
+              if [ -n "$RESOLVED" ]; then
+                WAIT_REPO=$(echo "$RESOLVED" | cut -d'/' -f1-2)
+                WAIT_PR=$(echo "$RESOLVED" | cut -d'/' -f3)
+                echo "Resolved wait_for branch to $WAIT_REPO PR #$WAIT_PR"
+              fi
+            fi
 
             echo "wait_for: $WAIT_TARGET — setting pending and sending wakeup"
             gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
@@ -188,6 +199,22 @@ jobs:
               echo "Wakeup sent to $WAIT_REPO PR #$WAIT_PR"
             fi
             exit 0
+          fi
+
+          # Resolve branch: format in active dependency
+          if echo "$DEP" | grep -qE '^[^/]+/[^/]+/branch:'; then
+            RESOLVED=$(resolve_branch "$DEP")
+            if [ -n "$RESOLVED" ]; then
+              echo "Resolved branch dependency to $RESOLVED"
+              DEP="$RESOLVED"
+            else
+              echo "Branch dependency not yet resolvable — no open PR for this branch"
+              gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+                -f state=pending \
+                -f context=e2e/integration \
+                -f "description=Waiting for dependency branch PR to open"
+              exit 0
+            fi
           fi
 
           # Validate dependency format

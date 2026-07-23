@@ -14,11 +14,12 @@ export default async function HomePage() {
     <div>
       <section className="mb-12">
         <h1 className="mb-3 text-4xl font-extrabold tracking-tight text-blue-900 sm:text-5xl">
-          Multi-Project Pipeline Lab
+          Multi-Project Pipeline laboratory
         </h1>
         <p className="max-w-2xl text-lg text-gray-600">
           A learning laboratory for understanding multi-project CI/CD pipelines,
-          Docker-based deployments, and cross-repository end-to-end testing.
+          Docker-based deployments, and cross-repository end-to-end testing
+          with branch-based dependency resolution.
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700">
